@@ -1,38 +1,46 @@
 /*
-  # Create candidates and related tables
+  # Initial CRM Schema Setup
 
-  1. New Tables
-    - `candidates`
-      - Core candidate information including personal/work details
-    - `candidate_social_profiles`
-      - Social media profiles for candidates
-    - `candidate_work_history`
-      - Work experience entries
-    - `candidate_education`
-      - Education history
-    - `candidate_preferences`
-      - Workplace and job preferences
-    - `candidate_nurture_info`
-      - Personal information for relationship building
-    - `candidate_activities`
-      - Interaction history and activities
-
+  1. Tables
+    - organizations (multi-tenant support)
+    - users (linked to organizations)
+    - candidates (core candidate data)
+    - candidate_activities (tracking interactions)
+    - candidate_tags (tagging system)
+    - tags (tag definitions)
+    - templates (message/form templates)
+    
   2. Security
-    - Enable RLS on all tables
-    - Add policies for authenticated users to access their organization's data
+    - RLS policies for multi-tenant isolation
+    - Organization-based access control
 */
 
--- Create enum types for various fields
-CREATE TYPE workplace_situation AS ENUM ('in_office', 'hybrid', 'remote');
-CREATE TYPE job_search_status AS ENUM ('active', 'passive', 'just_curious', 'not_looking');
-CREATE TYPE relationship_type AS ENUM ('candidate', 'client', 'both');
-CREATE TYPE employment_status AS ENUM ('employed', 'unemployed');
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Create the candidates table
-CREATE TABLE IF NOT EXISTS candidates (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL REFERENCES auth.users(id),
-  hubspot_id text UNIQUE,
+-- Organizations table for multi-tenant support
+CREATE TABLE organizations (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name text NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Profiles table extends auth.users
+CREATE TABLE profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id),
+  organization_id uuid REFERENCES organizations(id),
+  first_name text,
+  last_name text,
+  role text,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Candidates table
+CREATE TABLE candidates (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id uuid REFERENCES organizations(id),
   first_name text NOT NULL,
   last_name text NOT NULL,
   personal_email text,
@@ -40,200 +48,159 @@ CREATE TABLE IF NOT EXISTS candidates (
   phone text,
   linkedin_url text,
   github_url text,
+  other_social_urls jsonb,
   resume_url text,
-  relationship_type relationship_type NOT NULL,
+  relationship_type text CHECK (relationship_type IN ('candidate', 'client', 'both')),
   functional_role text,
-  city text,
-  city_category text,
-  zip_code text,
+  current_location jsonb,
   current_job_title text,
+  past_job_titles text[],
+  current_industry text,
+  past_industries text[],
+  tech_stack text[],
+  compensation_expectations jsonb,
   current_company text,
+  past_companies text[],
   current_company_size text,
-  base_compensation_expectation integer,
-  total_cash_compensation_expectation integer,
-  on_target_earnings integer,
-  current_workplace_situation workplace_situation,
-  desired_workplace_situation workplace_situation[],
-  job_search_status job_search_status DEFAULT 'passive',
-  employment_status employment_status DEFAULT 'employed',
-  visa_requirements text,
+  past_company_sizes text[],
+  must_haves text[],
+  schools jsonb,
+  workplace_preferences jsonb,
+  urgency_level text,
+  is_active_looking boolean DEFAULT false,
+  motivation_factors text[],
+  employment_status text,
+  visa_requirements jsonb,
+  nurturing_info jsonb,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now(),
-  last_sync_at timestamptz,
-  CONSTRAINT email_required CHECK (
-    CASE relationship_type
-      WHEN 'candidate' THEN personal_email IS NOT NULL
-      WHEN 'client' THEN work_email IS NOT NULL
-      WHEN 'both' THEN personal_email IS NOT NULL AND work_email IS NOT NULL
-    END
-  )
+  created_by uuid REFERENCES profiles(id),
+  updated_by uuid REFERENCES profiles(id)
 );
 
--- Create the social profiles table
-CREATE TABLE IF NOT EXISTS candidate_social_profiles (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  candidate_id uuid REFERENCES candidates(id) ON DELETE CASCADE,
-  platform text NOT NULL,
-  url text NOT NULL,
-  created_at timestamptz DEFAULT now()
-);
-
--- Create the work history table
-CREATE TABLE IF NOT EXISTS candidate_work_history (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  candidate_id uuid REFERENCES candidates(id) ON DELETE CASCADE,
-  company_name text NOT NULL,
-  job_title text NOT NULL,
-  company_size text,
-  industry text,
-  start_date date,
-  end_date date,
+-- Activities table
+CREATE TABLE activities (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  candidate_id uuid REFERENCES candidates(id),
+  organization_id uuid REFERENCES organizations(id),
+  type text NOT NULL,
   description text,
-  tech_stack text[],
-  created_at timestamptz DEFAULT now()
-);
-
--- Create the education table
-CREATE TABLE IF NOT EXISTS candidate_education (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  candidate_id uuid REFERENCES candidates(id) ON DELETE CASCADE,
-  school_name text NOT NULL,
-  degree text,
-  field_of_study text,
-  start_date date,
-  end_date date,
-  study_abroad_location text,
-  created_at timestamptz DEFAULT now()
-);
-
--- Create the preferences table
-CREATE TABLE IF NOT EXISTS candidate_preferences (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  candidate_id uuid REFERENCES candidates(id) ON DELETE CASCADE,
-  must_haves text[],
-  motivation_factors text[],
+  metadata jsonb,
   created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
+  created_by uuid REFERENCES profiles(id)
 );
 
--- Create the nurture info table
-CREATE TABLE IF NOT EXISTS candidate_nurture_info (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  candidate_id uuid REFERENCES candidates(id) ON DELETE CASCADE,
-  interests text[],
-  hobbies text[],
-  travel_preferences text,
-  family_status jsonb,
-  personal_notes text,
-  key_discussion_points text[],
-  professional_challenges text[],
-  advice_given text[],
+-- Tags table
+CREATE TABLE tags (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id uuid REFERENCES organizations(id),
+  name text NOT NULL,
+  color text,
   created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
+  created_by uuid REFERENCES profiles(id)
 );
 
--- Create the activities table
-CREATE TABLE IF NOT EXISTS candidate_activities (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  candidate_id uuid REFERENCES candidates(id) ON DELETE CASCADE,
-  activity_type text NOT NULL,
-  description text,
-  notes text,
-  performed_by uuid REFERENCES auth.users(id),
-  performed_at timestamptz DEFAULT now()
+-- Candidate tags junction table
+CREATE TABLE candidate_tags (
+  candidate_id uuid REFERENCES candidates(id),
+  tag_id uuid REFERENCES tags(id),
+  created_at timestamptz DEFAULT now(),
+  created_by uuid REFERENCES profiles(id),
+  PRIMARY KEY (candidate_id, tag_id)
+);
+
+-- Templates table
+CREATE TABLE templates (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id uuid REFERENCES organizations(id),
+  name text NOT NULL,
+  type text NOT NULL,
+  content text NOT NULL,
+  variables jsonb,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  created_by uuid REFERENCES profiles(id),
+  updated_by uuid REFERENCES profiles(id)
 );
 
 -- Enable RLS
+ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidate_social_profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidate_work_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidate_education ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidate_preferences ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidate_nurture_info ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidate_activities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE candidate_tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
 
 -- Create policies
-CREATE POLICY "Users can access their organization's candidates"
+CREATE POLICY "Users can view their organization"
+  ON organizations
+  FOR SELECT
+  TO authenticated
+  USING (id IN (
+    SELECT organization_id FROM profiles WHERE id = auth.uid()
+  ));
+
+CREATE POLICY "Users can view profiles in their organization"
+  ON profiles
+  FOR SELECT
+  TO authenticated
+  USING (organization_id IN (
+    SELECT organization_id FROM profiles WHERE id = auth.uid()
+  ));
+
+CREATE POLICY "Users can view candidates in their organization"
   ON candidates
-  FOR ALL
+  FOR SELECT
   TO authenticated
-  USING (organization_id = auth.uid());
+  USING (organization_id IN (
+    SELECT organization_id FROM profiles WHERE id = auth.uid()
+  ));
 
-CREATE POLICY "Users can access their candidates' social profiles"
-  ON candidate_social_profiles
-  FOR ALL
+CREATE POLICY "Users can create candidates in their organization"
+  ON candidates
+  FOR INSERT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM candidates
-      WHERE candidates.id = candidate_social_profiles.candidate_id
-      AND candidates.organization_id = auth.uid()
-    )
-  );
+  WITH CHECK (organization_id IN (
+    SELECT organization_id FROM profiles WHERE id = auth.uid()
+  ));
 
-CREATE POLICY "Users can access their candidates' work history"
-  ON candidate_work_history
-  FOR ALL
+CREATE POLICY "Users can update candidates in their organization"
+  ON candidates
+  FOR UPDATE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM candidates
-      WHERE candidates.id = candidate_work_history.candidate_id
-      AND candidates.organization_id = auth.uid()
-    )
-  );
+  USING (organization_id IN (
+    SELECT organization_id FROM profiles WHERE id = auth.uid()
+  ));
 
-CREATE POLICY "Users can access their candidates' education"
-  ON candidate_education
-  FOR ALL
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM candidates
-      WHERE candidates.id = candidate_education.candidate_id
-      AND candidates.organization_id = auth.uid()
-    )
-  );
+-- Create indexes for better performance
+CREATE INDEX idx_candidates_organization ON candidates(organization_id);
+CREATE INDEX idx_activities_candidate ON activities(candidate_id);
+CREATE INDEX idx_activities_organization ON activities(organization_id);
+CREATE INDEX idx_candidate_tags_candidate ON candidate_tags(candidate_id);
+CREATE INDEX idx_templates_organization ON templates(organization_id);
 
-CREATE POLICY "Users can access their candidates' preferences"
-  ON candidate_preferences
-  FOR ALL
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM candidates
-      WHERE candidates.id = candidate_preferences.candidate_id
-      AND candidates.organization_id = auth.uid()
-    )
-  );
+-- Create functions for updating timestamps
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE POLICY "Users can access their candidates' nurture info"
-  ON candidate_nurture_info
-  FOR ALL
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM candidates
-      WHERE candidates.id = candidate_nurture_info.candidate_id
-      AND candidates.organization_id = auth.uid()
-    )
-  );
+-- Create triggers for updating timestamps
+CREATE TRIGGER update_organizations_updated_at
+  BEFORE UPDATE ON organizations
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
 
-CREATE POLICY "Users can access their candidates' activities"
-  ON candidate_activities
-  FOR ALL
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM candidates
-      WHERE candidates.id = candidate_activities.candidate_id
-      AND candidates.organization_id = auth.uid()
-    )
-  );
+CREATE TRIGGER update_candidates_updated_at
+  BEFORE UPDATE ON candidates
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
 
--- Create indexes
-CREATE INDEX candidates_organization_id_idx ON candidates(organization_id);
-CREATE INDEX candidates_hubspot_id_idx ON candidates(hubspot_id);
-CREATE INDEX candidates_search_idx ON candidates(first_name, last_name, personal_email, work_email);
-CREATE INDEX candidate_activities_candidate_id_idx ON candidate_activities(candidate_id);
-CREATE INDEX candidate_activities_performed_at_idx ON candidate_activities(performed_at);
+CREATE TRIGGER update_templates_updated_at
+  BEFORE UPDATE ON templates
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
