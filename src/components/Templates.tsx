@@ -21,11 +21,16 @@ export function Templates() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    type: 'email' | 'message';
+    content: string;
+    variables: Record<string, string>;
+  }>({
     name: '',
-    type: 'email' as const,
+    type: 'email',
     content: '',
-    variables: {} as Record<string, string>,
+    variables: {},
   });
 
   useEffect(() => {
